@@ -1,54 +1,91 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const cors = require('cors');
+require('dotenv').config();   // loads .env file
 
 const app = express();
 
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-let books = [
-  { id: 1, title: 'The Alchemist', author: 'Paulo Coelho', isIssued: false, issuedTo: null },
-  { id: 2, title: '1984', author: 'George Orwell', isIssued: false, issuedTo: null },
-];
+// Import Book model
+const Book = require('./models/Book');
 
-let nextId = 3;
+// ─────────────────────────────────────────────
+// Connect to MongoDB
+// ─────────────────────────────────────────────
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch((err) => console.log('❌ MongoDB connection error:', err));
 
-app.get('/books', (req, res) => {
-  res.json(books);
-});
+// ─────────────────────────────────────────────
+// Routes
+// ─────────────────────────────────────────────
 
-app.post('/books', (req, res) => {
-  const { title, author } = req.body;
-  if (!title || !author) {
-    return res.status(400).json({ error: 'Title and author are required.' });
+// GET all books
+app.get('/books', async (req, res) => {
+  try {
+    const books = await Book.find();   // fetch all books from MongoDB
+    res.json(books);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
   }
-  const newBook = { id: nextId++, title, author, isIssued: false, issuedTo: null };
-  books.push(newBook);
-  res.status(201).json(newBook);
 });
 
-app.patch('/books/:id/issue', (req, res) => {
-  const id = parseInt(req.params.id);
-  const { issuedTo } = req.body;
-  const book = books.find(b => b.id === id);
-  if (!book) return res.status(404).json({ error: 'Book not found.' });
-  if (book.isIssued) return res.status(400).json({ error: `Already issued to ${book.issuedTo}.` });
-  if (!issuedTo) return res.status(400).json({ error: 'Provide the person name.' });
-  book.isIssued = true;
-  book.issuedTo = issuedTo;
-  res.json({ message: `Issued to ${issuedTo}`, book });
+// POST add a book
+app.post('/books', async (req, res) => {
+  try {
+    const { title, author } = req.body;
+    const book = new Book({ title, author }); // create new book using schema
+    await book.save();                         // save to MongoDB
+    res.status(201).json(book);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
-app.patch('/books/:id/return', (req, res) => {
-  const id = parseInt(req.params.id);
-  const book = books.find(b => b.id === id);
-  if (!book) return res.status(404).json({ error: 'Book not found.' });
-  if (!book.isIssued) return res.status(400).json({ error: 'Book is not currently issued.' });
-  book.isIssued = false;
-  book.issuedTo = null;
-  res.json({ message: 'Book returned successfully.', book });
+// PATCH issue a book
+app.patch('/books/:id/issue', async (req, res) => {
+  try {
+    const { issuedTo } = req.body;
+    const book = await Book.findById(req.params.id);  // find by MongoDB _id
+
+    if (!book) return res.status(404).json({ error: 'Book not found.' });
+    if (book.isIssued) return res.status(400).json({ error: `Already issued to ${book.issuedTo}.` });
+    if (!issuedTo) return res.status(400).json({ error: 'Provide the person name.' });
+
+    book.isIssued = true;
+    book.issuedTo = issuedTo;
+    await book.save();   // save updated book back to MongoDB
+
+    res.json({ message: `Issued to ${issuedTo}`, book });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.listen(5000, () => {
-  console.log('✅ Server is running on http://localhost:5000');
+// PATCH return a book
+app.patch('/books/:id/return', async (req, res) => {
+  try {
+    const book = await Book.findById(req.params.id);
+
+    if (!book) return res.status(404).json({ error: 'Book not found.' });
+    if (!book.isIssued) return res.status(400).json({ error: 'Book is not currently issued.' });
+
+    book.isIssued = false;
+    book.issuedTo = null;
+    await book.save();
+
+    res.json({ message: 'Book returned successfully.', book });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
+// ─────────────────────────────────────────────
+// Start server
+// ─────────────────────────────────────────────
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`✅ Server is running on http://localhost:${PORT}`));
